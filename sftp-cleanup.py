@@ -1,12 +1,14 @@
-import paramiko
+import argparse
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from stat import S_ISDIR
 
+import paramiko
+
 from config import SftpCleanupConfig as config_store
 
 ###############################################################################
-# Implementation
+# Function implementation
 ###############################################################################
 
 
@@ -49,7 +51,10 @@ def print_msg(msg: str, level: str = "INFO"):
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}][{level.center(7)}] {msg}")
 
 
-def worker():
+def worker(dry_run: bool = False):
+    if dry_run:
+        print_msg("=> Running in dry-run mode <=")
+
     print_msg("Connecting to SFTP server")
 
     transport = paramiko.Transport((config_store.host, config_store.port))
@@ -92,12 +97,13 @@ def worker():
     for f in files_to_delete:
         print_msg(f"- Removing file: {f.path}")
 
-        try:
-            sftp.remove(f.path)
-        except FileNotFoundError as e:
-            print_msg(f"- File does not exist: {f}", level="WARN")
-        except IOError as e:
-            print_msg(f"  Failed to remove: {f}", level="ERROR")
+        if not dry_run:
+            try:
+                sftp.remove(f.path)
+            except FileNotFoundError:
+                print_msg(f"- File does not exist: {f}", level="WARN")
+            except IOError:
+                print_msg(f"  Failed to remove: {f}", level="ERROR")
 
         if f.folder not in folders_to_check:
             folders_to_check.append(f.folder)
@@ -110,7 +116,8 @@ def worker():
 
             if not folder_content:
                 print_msg(f"- Removing empty folder: {f}")
-                sftp.rmdir(f)
+                if not dry_run:
+                    sftp.rmdir(f)
         except FileNotFoundError:
             print_msg(f"- Folder does not exist: {f}", level="WARN")
         except IOError:
@@ -121,4 +128,15 @@ def worker():
     sftp.close()
     transport.close()
 
-worker()
+
+###############################################################################
+# Main entrypoint
+###############################################################################
+
+parser = argparse.ArgumentParser(description="Remove old files from a SFTP server.")
+
+parser.add_argument("--dry-run", action="store_true")
+
+args = parser.parse_args()
+
+worker(dry_run=args.dry_run)
