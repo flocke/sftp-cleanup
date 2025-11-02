@@ -1,9 +1,11 @@
 import argparse
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from stat import S_ISDIR
 
 import paramiko
+from croniter import croniter
 
 from config import SftpCleanupConfig as config_store
 
@@ -129,14 +131,52 @@ def worker(dry_run: bool = False):
     transport.close()
 
 
+def next_schedule_execution(schedule):
+    next_runtime = croniter(schedule, datetime.now()).get_next(datetime)
+    print_msg(f"Next execution: {next_runtime}")
+    return next_runtime
+
+
+def sleep_till_next_min():
+    t = datetime.now(timezone.utc)
+    sleeptime = 60 - (t.second + t.microsecond / 1000000.0)
+    time.sleep(sleeptime)
+
+
 ###############################################################################
 # Main entrypoint
 ###############################################################################
 
 parser = argparse.ArgumentParser(description="Remove old files from a SFTP server.")
 
-parser.add_argument("--dry-run", action="store_true")
+parser.add_argument(
+    "--scheduler",
+    "-s",
+    action="store_true",
+    help="start scheduled execution of the cleanup according to the schedule in the config",
+)
+parser.add_argument(
+    "--dry-run",
+    action="store_true",
+    help="execute in dry-run mode (no modifications are made on the server)",
+)
 
 args = parser.parse_args()
 
-worker(dry_run=args.dry_run)
+if args.scheduler:
+    print_msg(f"Starting scheduler ({config_store.schedule})")
+    next_execution = next_schedule_execution(config_store.schedule)
+
+    while True:
+        current_minute = datetime.now().replace(second=0, microsecond=0)
+
+        if current_minute == next_execution:
+            worker(dry_run=args.dry_run)
+            next_execution = next_schedule_execution(config_store.schedule)
+        elif current_minute > next_execution:
+            print_msg("Schedule execution missed", level="ERROR")
+            next_execution = next_schedule_execution(config_store.schedule)
+
+        sleep_till_next_min()
+else:
+    worker(dry_run=args.dry_run)
