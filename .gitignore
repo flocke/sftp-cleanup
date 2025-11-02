@@ -1,0 +1,6 @@
+# Python-specific
+__pycache__/
+.venv
+
+# Local config
+/config.py
